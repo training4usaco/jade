@@ -181,6 +181,35 @@ async fn get_llm_response(
     Ok(cleaned_text)
 }
 
+fn handle_execution(command: &str) -> Result<Option<(String, String)>, Box<dyn std::error::Error>> {
+    // println!("{} {}", style("Suggestion:").bold().blue(), command);
+
+    if command.contains("reset --hard") || command.contains("rm -rf") {
+        println!("{}", style("ABORTING: Destructive command detected.").bold().red());
+        return Ok(None);
+    }
+
+    println!("{}", style(format!("Executing command: {}", command)).dim());
+
+    let output = if cfg!(target_os = "windows") {
+        Command::new("cmd").args(["/C", command]).output()?
+    } else {
+        Command::new("sh").arg("-c").arg(command).output()?
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if output.status.success() {
+        println!("{}", style("✔ Success").green());
+    } else {
+        println!("{}", style("✖ Failed").red());
+        if !stderr.is_empty() { println!("{}", style(&stderr).red()); }
+    }
+
+    return Ok(Some((stdout, stderr)));
+}
+
 async fn repl_step(
     client: &Client,
     api_key: &str,
@@ -189,8 +218,53 @@ async fn repl_step(
     let user_input: String = read_user_input();
     let git_status = get_git_status();
 
-    let response_result = get_llm_response(client, api_key, &user_input, &git_status, history).await?;
-    println!("{}", response_result);
+    let mut attempts: i8 = 0;
+
+    loop {
+        if attempts > 20 {
+            println!("{}", style(format!("ABORTING: took too many attempts ({})", attempts)).bold().red());
+            break;
+        }
+
+        let response = get_llm_response(client, api_key, &user_input, &git_status, history).await?;
+        let mut valid: bool = false;
+
+        let (maybe_command, maybe_final_message) =
+            if let Some((before, after)) = response.split_once("FINAL:") {
+                (before, Some(after.trim()))
+            } else {
+                (response.as_str(), None)
+            };
+
+        if let Some((_tag, raw_text)) = maybe_command.split_once("EXECUTE:") {
+            let command = raw_text.lines().next().unwrap_or("").trim();
+
+            if !command.is_empty() {
+                valid = true;
+                if let Some((output, error)) = handle_execution(command)? {
+                    let feedback = format!("Output of `{}`:\n{}\n{}", command, output, error);
+                    history.push(GeminiContent {
+                        role: "user".to_string(),
+                        parts: vec![GeminiPart { text: feedback }],
+                    });
+                }
+            }
+        }
+
+        if let Some(msg) = maybe_final_message {
+            if !msg.is_empty() {
+                println!("{}: {}", style("Jade").green().bold(), msg);
+                break;
+            }
+        }
+
+        if !valid {
+            println!("{}", style("ABORTING: Error parsing response").bold().red());
+            break;
+        }
+
+        attempts += 1;
+    }
 
     Ok(())
 }
