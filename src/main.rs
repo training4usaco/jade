@@ -182,7 +182,7 @@ async fn get_llm_response(
 }
 
 fn handle_execution(command: &str) -> Result<Option<(String, String)>, Box<dyn std::error::Error>> {
-    println!("{} {}", style("Suggestion:").bold().blue(), command);
+    // println!("{} {}", style("Suggestion:").bold().blue(), command);
 
     if command.contains("reset --hard") || command.contains("rm -rf") {
         println!("{}", style("ABORTING: Destructive command detected.").bold().red());
@@ -227,7 +227,6 @@ async fn repl_step(
         }
 
         let response = get_llm_response(client, api_key, &user_input, &git_status, history).await?;
-        println!("LLM RESPONSE: {}", response);
         let mut valid: bool = false;
 
         let (maybe_command, maybe_final_message) =
