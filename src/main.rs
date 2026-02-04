@@ -5,7 +5,6 @@ use std::process::Command;
 use dotenv::dotenv;
 use serde::{Deserialize, Serialize};
 use reqwest::Client;
-use dialoguer::{theme::ColorfulTheme, Confirm};
 
 const SYSTEM_PROMPT: &str = include_str!("prompts/system_prompt.txt");
 const GEMINI_MODEL: &str = "gemini-3-flash-preview";
@@ -190,27 +189,25 @@ fn handle_execution(command: &str) -> Result<Option<(String, String)>, Box<dyn s
         return Ok(None);
     }
 
-    if Confirm::with_theme(&ColorfulTheme::default()).with_prompt("Execute?").default(true).interact()? {
-        let output = if cfg!(target_os = "windows") {
-            Command::new("cmd").args(["/C", command]).output()?
-        } else {
-            Command::new("sh").arg("-c").arg(command).output()?
-        };
+    println!("{}", style(format!("Executing command: {}", command)).dim());
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let output = if cfg!(target_os = "windows") {
+        Command::new("cmd").args(["/C", command]).output()?
+    } else {
+        Command::new("sh").arg("-c").arg(command).output()?
+    };
 
-        if output.status.success() {
-            println!("{}", style("✔ Success").green());
-            if !stdout.is_empty() { println!("{}", style(&stdout).dim()); }
-        } else {
-            println!("{}", style("✖ Failed").red());
-            if !stderr.is_empty() { println!("{}", style(&stderr).red()); }
-        }
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-        return Ok(Some((stdout, stderr)));
+    if output.status.success() {
+        println!("{}", style("✔ Success").green());
+    } else {
+        println!("{}", style("✖ Failed").red());
+        if !stderr.is_empty() { println!("{}", style(&stderr).red()); }
     }
-    Ok(None)
+
+    return Ok(Some((stdout, stderr)));
 }
 
 async fn repl_step(
