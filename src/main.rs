@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use reqwest::Client;
 
 const SYSTEM_PROMPT: &str = include_str!("prompts/system_prompt.txt");
-const GEMINI_MODEL: &str = "gemini-3-flash-preview";
+const GEMINI_MODEL: &str = "gemini-2.5-flash";
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct GeminiPart {
