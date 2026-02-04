@@ -237,13 +237,13 @@ async fn repl_step(
                 (response.as_str(), None)
             };
 
-        if let Some((_tag, command)) = maybe_command.split_once("EXECUTE:") {
-            let clean_command = command.trim();
+        if let Some((_tag, raw_text)) = maybe_command.split_once("EXECUTE:") {
+            let command = raw_text.lines().next().unwrap_or("").trim();
 
-            if !clean_command.is_empty() {
+            if !command.is_empty() {
                 valid = true;
-                if let Some((output, error)) = handle_execution(clean_command)? {
-                    let feedback = format!("Output of `{}`:\n{}\n{}", clean_command, output, error);
+                if let Some((output, error)) = handle_execution(command)? {
+                    let feedback = format!("Output of `{}`:\n{}\n{}", command, output, error);
                     history.push(GeminiContent {
                         role: "user".to_string(),
                         parts: vec![GeminiPart { text: feedback }],
