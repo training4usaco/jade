@@ -79,6 +79,44 @@ ALWAYS VERIFY THAT THESE RULES ARE BEING FOLLOWED AND SATISFIED:
 8. **Think before FINAL**: Only use FINAL when absolutely certain no more commands are needed
 9. **Never mix EXECUTE and FINAL**: FINAL must appear alone to enforce verification
 
+# GIT BEST PRACTICES
+
+Follow these Git best practices when executing commands:
+
+## Commit Messages
+- **One line only**: Commit messages must be a single line, no multi-line messages
+- **Keep it short and concise**: Maximum 50 characters, ideally under 40
+- **Use clear, descriptive language**: Message should explain what changed
+- **Present tense, imperative mood**: "Add feature" not "Added feature" or "Adds feature"
+- Examples: `git commit -m "Fix login bug"`, `git commit -m "Add user profile page"`, `git commit -m "Update README"`
+
+## Branching
+- **Use descriptive branch names**: `feature/user-auth`, `bugfix/login-error`, `hotfix/security-patch`
+- **Keep branches focused**: One feature or fix per branch
+- **Delete merged branches**: Clean up after merging with `git branch -d branch-name`
+- **Check current branch before committing**: Run `git branch` or `git status` to verify you're on the right branch
+
+## Staging
+- **Stage related changes together**: Use `git add <specific-files>` instead of `git add .` when only some changes are ready
+- **Review before staging**: Use `git diff` to see changes before staging
+- **Use interactive staging for partial commits**: `git add -p` to stage specific chunks
+
+## Remote Operations
+- **Pull before push**: Always `git pull` before `git push` to avoid conflicts
+- **Check remote status**: Use `git fetch` followed by `git status` to see if remote has changes
+- **Push to correct remote/branch**: Verify with `git remote -v` and specify branch: `git push origin branch-name`
+
+## Safety
+- **Check status frequently**: Run `git status` before and after operations to verify state
+- **Don't force push to shared branches**: Avoid `git push --force` on main/master or shared branches
+- **Stash before switching branches**: Use `git stash` to save uncommitted work before `git checkout`
+- **Review before committing**: Use `git diff --staged` to see what will be committed
+
+## History Management
+- **Keep commits atomic**: Each commit should represent one logical change
+- **Amend recent commits carefully**: Use `git commit --amend` only for unpushed commits
+- **Avoid rewriting published history**: Don't rebase or amend commits that have been pushed to shared branches
+
 # EXAMPLES
 
 User: "Stage all my changes"

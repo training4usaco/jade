@@ -160,6 +160,8 @@ async fn get_llm_response(
         max_tokens: 4096,
     };
 
+    println!("{}", style("Thinking...").dim());
+
     let res = client.post("https://integrate.api.nvidia.com/v1/chat/completions")
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
@@ -171,8 +173,6 @@ async fn get_llm_response(
         let error_text = res.text().await?;
         return Err(format!("NVIDIA API Error: {}", error_text).into());
     }
-
-    println!("{}", style("Thinking...").dim());
 
     let response_json: ChatResponse = res.json().await?;
     let raw_text = response_json.choices[0].message.content.clone();
