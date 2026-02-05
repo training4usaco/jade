@@ -137,8 +137,6 @@ async fn get_llm_response(
     git_status: &str,
     history: &mut Vec<Message>,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    println!("{}", style("Connecting...").dim());
-
     let system_msg = Message {
         role: "system".to_string(),
         content: format!("{}\n\nGIT STATUS:\n{}", SYSTEM_PROMPT, git_status),
