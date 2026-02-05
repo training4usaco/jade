@@ -1,5 +1,5 @@
 use console::style;
-use std::{io, process};
+use std::{env, io, process};
 use std::io::Write;
 use std::process::Command;
 use dotenv::dotenv;
@@ -7,34 +7,31 @@ use serde::{Deserialize, Serialize};
 use reqwest::Client;
 
 const SYSTEM_PROMPT: &str = include_str!("prompts/system_prompt.txt");
-const GEMINI_MODEL: &str = "gemini-2.5-flash";
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-struct GeminiPart {
-    text: String,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-struct GeminiContent {
+const MODEL_NAME: &str = "moonshotai/kimi-k2-thinking";
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct Message {
     role: String,
-    parts: Vec<GeminiPart>,
+    content: String,
 }
 
-#[derive(Serialize)]
-struct GeminiRequest {
-    contents: Vec<GeminiContent>,
-    #[serde(rename = "systemInstruction")]
-    system_instruction: Option<GeminiContent>,
+#[derive(Serialize, Debug)]
+struct ChatRequest {
+    model: String,
+    messages: Vec<Message>,
+    stream: bool,
+    temperature: f32,
+    max_tokens: usize,
 }
 
-#[derive(Deserialize)]
-struct GeminiResponse {
-    candidates: Option<Vec<GeminiCandidate>>,
+#[derive(Deserialize, Debug)]
+struct ChatResponse {
+    choices: Vec<Choice>,
 }
 
-#[derive(Deserialize)]
-struct GeminiCandidate {
-    content: GeminiContent,
+#[derive(Deserialize, Debug)]
+struct Choice {
+    message: Message,
 }
 
 fn print_welcome() {
@@ -89,7 +86,6 @@ fn print_welcome() {
 
 fn read_user_input() -> String {
     let mut user_input = String::new();
-
     print!("> ");
     io::stdout().flush().unwrap();
 
@@ -108,21 +104,30 @@ fn read_user_input() -> String {
 
 fn get_git_status() -> String {
     let output = Command::new("git").arg("status").output();
-
     match output {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
-
         Ok(o) => {
             let error_msg = String::from_utf8_lossy(&o.stderr).trim().to_string();
-            if error_msg.is_empty() {
-                "Git command failed, but returned no error message.".to_string()
-            } else {
-                error_msg
-            }
+            if error_msg.is_empty() { "Git command failed, no error message.".to_string() } else { error_msg }
         },
-
-        Err(e) => format!("Critical Error: Could not execute 'git'. Is it installed? Details: {}", e),
+        Err(e) => format!("Critical Error: Could not execute 'git'. Details: {}", e),
     }
+}
+
+fn remove_think_tags(text: &str) -> String {
+    let mut clean = String::new();
+    let mut remainder = text;
+    while let Some(start) = remainder.find("<think>") {
+        clean.push_str(&remainder[..start]);
+        let after_start = &remainder[start + 7..];
+        if let Some(end_offset) = after_start.find("</think>") {
+            remainder = &after_start[end_offset + 8..];
+        } else {
+            return clean;
+        }
+    }
+    clean.push_str(remainder);
+    clean
 }
 
 async fn get_llm_response(
@@ -130,60 +135,64 @@ async fn get_llm_response(
     api_key: &str,
     user_input: &str,
     git_status: &str,
-    history: &mut Vec<GeminiContent>,
+    history: &mut Vec<Message>,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let system_instruction = GeminiContent {
-        role: "user".to_string(),
-        parts: vec![GeminiPart { text: format!("{}\n\nGIT STATUS:\n{}", SYSTEM_PROMPT, git_status) }],
+    println!("{}", style("Connecting...").dim());
+
+    let system_msg = Message {
+        role: "system".to_string(),
+        content: format!("{}\n\nGIT STATUS:\n{}", SYSTEM_PROMPT, git_status),
     };
 
-    history.push(GeminiContent {
+    history.push(Message {
         role: "user".to_string(),
-        parts: vec![GeminiPart { text: user_input.to_string() }],
+        content: user_input.to_string(),
     });
 
-    let request_body = GeminiRequest {
-        contents: history.clone(),
-        system_instruction: Some(system_instruction),
+    let mut request_messages = vec![system_msg];
+    request_messages.extend(history.clone());
+
+    let request_body = ChatRequest {
+        model: MODEL_NAME.to_string(),
+        messages: request_messages,
+        stream: false,
+        temperature: 0.3,
+        max_tokens: 4096,
     };
 
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-        GEMINI_MODEL, api_key
-    );
-
-    let res = client.post(&url).json(&request_body).send().await?;
+    let res = client.post("https://integrate.api.nvidia.com/v1/chat/completions")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&request_body)
+        .send()
+        .await?;
 
     if !res.status().is_success() {
         let error_text = res.text().await?;
-        return Err(format!("API Error: {}", error_text).into());
+        return Err(format!("NVIDIA API Error: {}", error_text).into());
     }
 
-    let response_json: GeminiResponse = res.json().await?;
+    println!("{}", style("Thinking...").dim());
 
-    let response_text = response_json
-        .candidates
-        .as_ref()
-        .and_then(|c| c.first())
-        .and_then(|c| c.content.parts.first())
-        .map(|p| p.text.clone())
-        .unwrap_or_else(|| "No response.".to_string());
+    let response_json: ChatResponse = res.json().await?;
+    let raw_text = response_json.choices[0].message.content.clone();
 
-    let cleaned_text = response_text.replace("`", "").trim().to_string();
+    let without_thinking = remove_think_tags(&raw_text);
+    let cleaned_text = without_thinking.replace("`", "").trim().to_string();
 
-    history.push(GeminiContent {
-        role: "model".to_string(),
-        parts: vec![GeminiPart { text: cleaned_text.clone() }],
+    history.push(Message {
+        role: "assistant".to_string(),
+        content: cleaned_text.clone(),
     });
 
-    if history.len() > 20 { history.drain(0..2); }
+    if history.len() > 20 {
+        history.drain(0..2);
+    }
 
     Ok(cleaned_text)
 }
 
 fn handle_execution(command: &str) -> Result<Option<(String, String)>, Box<dyn std::error::Error>> {
-    // println!("{} {}", style("Suggestion:").bold().blue(), command);
-
     if command.contains("reset --hard") || command.contains("rm -rf") {
         println!("{}", style("ABORTING: Destructive command detected.").bold().red());
         return Ok(None);
@@ -207,27 +216,28 @@ fn handle_execution(command: &str) -> Result<Option<(String, String)>, Box<dyn s
         if !stderr.is_empty() { println!("{}", style(&stderr).red()); }
     }
 
-    return Ok(Some((stdout, stderr)));
+    Ok(Some((stdout, stderr)))
 }
 
 async fn repl_step(
     client: &Client,
     api_key: &str,
-    history: &mut Vec<GeminiContent>
+    history: &mut Vec<Message>
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let user_input: String = read_user_input();
+    let user_input = read_user_input();
     let git_status = get_git_status();
-
     let mut attempts: i8 = 0;
 
+    println!("{}", style("Processing user input...").dim());
+
     loop {
-        if attempts > 20 {
-            println!("{}", style(format!("ABORTING: took too many attempts ({})", attempts)).bold().red());
+        if attempts > 10 {
+            println!("{}", style("ABORTING: Too many attempts").bold().red());
             break;
         }
 
         let response = get_llm_response(client, api_key, &user_input, &git_status, history).await?;
-        let mut valid: bool = false;
+        let mut valid = false;
 
         let (maybe_command, maybe_final_message) =
             if let Some((before, after)) = response.split_once("FINAL:") {
@@ -236,17 +246,17 @@ async fn repl_step(
                 (response.as_str(), None)
             };
 
-        if let Some((_tag, raw_text)) = maybe_command.split_once("EXECUTE:") {
+        if let Some((_, raw_text)) = maybe_command.split_once("EXECUTE:") {
             let command = raw_text.lines().next().unwrap_or("").trim();
-
             if !command.is_empty() {
                 valid = true;
                 if let Some((output, error)) = handle_execution(command)? {
-                    let feedback = format!("Output of `{}`:\n{}\n{}", command, output, error);
-                    history.push(GeminiContent {
-                        role: "user".to_string(),
-                        parts: vec![GeminiPart { text: feedback }],
-                    });
+                    let feedback = if !error.is_empty() {
+                        format!("Output of `{}`:\n{}\nIMPORTANT! FIX THIS ERROR: {}", command, output, error)
+                    } else {
+                        format!("Output of `{}`:\n{}", command, output)
+                    };
+                    history.push(Message { role: "user".to_string(), content: feedback });
                 }
             }
         }
@@ -262,27 +272,24 @@ async fn repl_step(
             println!("{}", style("ABORTING: Error parsing response").bold().red());
             break;
         }
-
         attempts += 1;
     }
-
     Ok(())
 }
 
 #[tokio::main]
 async fn main() {
     print_welcome();
+    let client = Client::new();
 
     dotenv().ok();
-    let api_key = std::env::var("GEMINI_API_KEY").expect("KEY NOT FOUND");
+    let api_key = env::var("NVIDIA_API_KEY").expect("NVIDIA_API_KEY must be set in .env file");
 
-    let client = Client::new();
-    let mut history: Vec<GeminiContent> = Vec::new();
+    let mut history: Vec<Message> = Vec::new();
 
     loop {
         if let Err(e) = repl_step(&client, &api_key, &mut history).await {
             println!("{}", style(format!("Critical Error: {}", e)).red().bold());
         }
     }
-
 }
