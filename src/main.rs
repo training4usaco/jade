@@ -237,8 +237,6 @@ async fn repl_step(
 
         let response = get_llm_response(client, api_key, &current_input, &git_status, history).await?;
 
-        println!("LLM RESPONSE: {}", response);
-
         current_input = String::new();
 
         if response.contains("FINAL:") && response.contains("EXECUTE:") {
@@ -258,7 +256,6 @@ async fn repl_step(
         let mut feedback_buffer = String::new();
 
         for command in response.lines() {
-            println!("COMMAND: {}", command);
             if let Some((_, command_cleaned)) = command.trim().split_once("EXECUTE:") {
                 if !command_cleaned.is_empty() {
                     if let Some((output, error, executed_command)) = handle_execution(command_cleaned)? {
