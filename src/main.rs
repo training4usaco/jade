@@ -1,10 +1,11 @@
 use console::style;
-use std::{env, io, process};
+use dialoguer::{Confirm, Password};
+use std::{env, fs, io, process};
 use std::io::Write;
 use std::process::Command;
-use dotenv::dotenv;
 use serde::{Deserialize, Serialize};
 use reqwest::Client;
+use std::path::PathBuf;
 
 const SYSTEM_PROMPT: &str = include_str!("prompts/system_prompt.txt");
 
@@ -73,9 +74,9 @@ fn print_welcome() {
     println!("{}                                                                  {}", style("│").dim(), style("│").dim());
 
     println!(
-        "{}                         {}                         {}",
+        "{}                            {}                           {}",
         style("│").dim(),
-        style("AI Git Companion").white(),
+        style("AI Git Tool").white(),
         style("│").dim()
     );
 
@@ -292,13 +293,73 @@ async fn repl_step(
     Ok(())
 }
 
+fn get_env_path() -> PathBuf {
+    // Use ~/.jade/.env as the config location
+    let home = env::var("HOME")
+        .or_else(|_| env::var("USERPROFILE"))
+        .expect("Could not determine home directory");
+
+    let mut path = PathBuf::from(home);
+    path.push(".jade");
+
+    fs::create_dir_all(&path).ok();
+
+    path.push(".env");
+    path
+}
+
+fn setup_config() -> Result<(), Box<dyn std::error::Error>> {
+    let env_file = get_env_path();
+
+    println!("\n{}", style("No configuration found!").yellow().bold());
+    println!("The config file should be at: {}", style(env_file.display()).cyan());
+
+    let should_setup = Confirm::new()
+        .with_prompt("Would you like to set up your API key now?")
+        .default(true)
+        .interact()?;
+
+    if !should_setup {
+        println!("{}", style("Setup cancelled. Please create the .env file manually.").yellow());
+        process::exit(1);
+    }
+
+    let api_key = Password::new()
+        .with_prompt("Enter your NVIDIA API key")
+        .interact()?;
+
+    if api_key.trim().is_empty() {
+        println!("{}", style("API key cannot be empty!").red());
+        process::exit(1);
+    }
+
+    fs::write(&env_file, format!("NVIDIA_API_KEY={}", api_key.trim()))?;
+
+    println!("\n{}", style("✓ Configuration saved successfully!").green().bold());
+    println!("You can edit it later at: {}\n", style(env_file.display()).cyan());
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() {
     print_welcome();
     let client = Client::new();
 
-    dotenv().ok();
-    let api_key = env::var("NVIDIA_API_KEY").expect("NVIDIA_API_KEY must be set in .env file");
+    let env_file = get_env_path();
+
+    if !env_file.exists() {
+        if let Err(e) = setup_config() {
+            eprintln!("{}", style(format!("Setup failed: {}", e)).red().bold());
+            process::exit(1);
+        }
+    }
+
+    dotenvy::from_path(&env_file)
+        .expect(&format!("Failed to load .env from {:?}", env_file));
+
+    let api_key = env::var("NVIDIA_API_KEY")
+        .expect("NVIDIA_API_KEY must be set in .env file");
 
     let mut history: Vec<Message> = Vec::new();
 
