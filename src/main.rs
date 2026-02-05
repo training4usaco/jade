@@ -102,6 +102,15 @@ fn read_user_input() -> String {
     return user_input.trim().to_string();
 }
 
+fn add_llm_correction(command: &str, correction_message: &str, history: &mut Vec<Message>) {
+    println!("{}", style(format!("LLM correction message: {}", correction_message)).yellow().dim());
+
+    history.push(Message {
+        role: "user".to_string(),
+        content: format!("ERROR: {} command is invalid. {}", command, correction_message),
+    });
+}
+
 fn get_git_status() -> String {
     let output = Command::new("git").arg("status").output();
     match output {
@@ -112,22 +121,6 @@ fn get_git_status() -> String {
         },
         Err(e) => format!("Critical Error: Could not execute 'git'. Details: {}", e),
     }
-}
-
-fn remove_think_tags(text: &str) -> String {
-    let mut clean = String::new();
-    let mut remainder = text;
-    while let Some(start) = remainder.find("<think>") {
-        clean.push_str(&remainder[..start]);
-        let after_start = &remainder[start + 7..];
-        if let Some(end_offset) = after_start.find("</think>") {
-            remainder = &after_start[end_offset + 8..];
-        } else {
-            return clean;
-        }
-    }
-    clean.push_str(remainder);
-    clean
 }
 
 async fn get_llm_response(
@@ -177,8 +170,7 @@ async fn get_llm_response(
     let response_json: ChatResponse = res.json().await?;
     let raw_text = response_json.choices[0].message.content.clone();
 
-    let without_thinking = remove_think_tags(&raw_text);
-    let cleaned_text = without_thinking.replace("`", "").trim().to_string();
+    let cleaned_text = raw_text.replace("`", "").trim().to_string();
 
     history.push(Message {
         role: "assistant".to_string(),
@@ -192,10 +184,17 @@ async fn get_llm_response(
     Ok(cleaned_text)
 }
 
-fn handle_execution(command: &str) -> Result<Option<(String, String)>, Box<dyn std::error::Error>> {
+fn handle_execution(command: &str) -> Result<Option<(String, String, bool)>, Box<dyn std::error::Error>> {
     if command.contains("reset --hard") || command.contains("rm -rf") {
-        println!("{}", style("ABORTING: Destructive command detected.").bold().red());
-        return Ok(None);
+        return Ok(Some(("Do NOT try to execute any destructive commands".to_string(), "".to_string(), false)));
+    }
+
+    if command.contains("EXECUTE:") {
+        return Ok(Some((
+            "Each EXECUTE command must be on its own line. Format:\n".to_string() +
+            "EXECUTE: <command>\n" +
+            "...\n" +
+            "EXECUTE: <command>", "".to_string(), false)));
     }
 
     println!("{}", style(format!("Executing command: {}", command)).dim());
@@ -216,7 +215,7 @@ fn handle_execution(command: &str) -> Result<Option<(String, String)>, Box<dyn s
         if !stderr.is_empty() { println!("{}", style(&stderr).red()); }
     }
 
-    Ok(Some((stdout, stderr)))
+    Ok(Some((stdout, stderr, true)))
 }
 
 async fn repl_step(
@@ -240,6 +239,11 @@ async fn repl_step(
 
         current_input = String::new();
 
+        if response.contains("FINAL:") && response.contains("EXECUTE:") {
+            add_llm_correction(&response, "EXECUTE lines must contain ONLY the command. \
+            Remove all explanations and commentary. Format: `EXECUTE: <command>`.", history);
+        }
+
         if let Some((_, final_msg)) = response.split_once("FINAL:") {
             let clean_msg = final_msg.trim();
             if !clean_msg.is_empty() {
@@ -248,21 +252,28 @@ async fn repl_step(
             break;
         }
 
-        let parts: Vec<&str> = response.split("EXECUTE:").collect();
         let mut executed_something = false;
         let mut feedback_buffer = String::new();
 
-        for part in parts.iter().skip(1) {
-            let command = part.trim();
-
-            if !command.is_empty() {
-                executed_something = true;
-                if let Some((output, error)) = handle_execution(command)? {
-                    feedback_buffer.push_str(&format!("Output of `{}`:\n{}\n", command, output));
-                    if !error.is_empty() {
-                        feedback_buffer.push_str(&format!("Error/Stderr: {}\n", error));
+        for command in response.lines() {
+            if let Some((_, command_cleaned)) = command.trim().split_once("EXECUTE:") {
+                if !command_cleaned.is_empty() {
+                    if let Some((output, error, executed_command)) = handle_execution(command_cleaned)? {
+                        executed_something |= executed_command;
+                        if !executed_command {
+                            add_llm_correction(command_cleaned, &output, history);
+                        } else {
+                            feedback_buffer.push_str(&format!("Output of `{}`:\n{}\n", command_cleaned, output));
+                            if !error.is_empty() {
+                                feedback_buffer.push_str(&format!("ERROR: {}\n", error));
+                            }
+                        }
                     }
                 }
+            }
+            else {
+                add_llm_correction(command.trim(), "Command should start with `EXECUTE`.", history);
+                continue;
             }
         }
 
@@ -271,10 +282,9 @@ async fn repl_step(
                 role: "user".to_string(),
                 content: feedback_buffer
             });
-        } else {
-            println!("{}", style("ABORTING: Response contained neither EXECUTE nor FINAL").bold().red());
-            println!("Raw response: {}", response);
-            break;
+        }
+        else {
+            add_llm_correction(&response, "Command should start with either `FINAL:` or `EXECUTE`.", history);
         }
 
         attempts += 1;
