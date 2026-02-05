@@ -8,7 +8,7 @@ use reqwest::Client;
 
 const SYSTEM_PROMPT: &str = include_str!("prompts/system_prompt.txt");
 
-const MODEL_NAME: &str = "moonshotai/kimi-k2-thinking";
+const MODEL_NAME: &str = "moonshotai/kimi-k2.5";
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Message {
     role: String,
@@ -142,10 +142,12 @@ async fn get_llm_response(
         content: format!("{}\n\nGIT STATUS:\n{}", SYSTEM_PROMPT, git_status),
     };
 
-    history.push(Message {
-        role: "user".to_string(),
-        content: user_input.to_string(),
-    });
+    if !user_input.trim().is_empty() {
+        history.push(Message {
+            role: "user".to_string(),
+            content: user_input.to_string(),
+        });
+    }
 
     let mut request_messages = vec![system_msg];
     request_messages.extend(history.clone());
@@ -222,11 +224,11 @@ async fn repl_step(
     api_key: &str,
     history: &mut Vec<Message>
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let user_input = read_user_input();
+    let mut current_input = read_user_input();
     let git_status = get_git_status();
     let mut attempts: i8 = 0;
 
-    println!("{}", style("Processing user input...").dim());
+    println!("{}", style("Processing...").dim());
 
     loop {
         if attempts > 10 {
@@ -234,42 +236,47 @@ async fn repl_step(
             break;
         }
 
-        let response = get_llm_response(client, api_key, &user_input, &git_status, history).await?;
-        let mut valid = false;
+        let response = get_llm_response(client, api_key, &current_input, &git_status, history).await?;
 
-        let (maybe_command, maybe_final_message) =
-            if let Some((before, after)) = response.split_once("FINAL:") {
-                (before, Some(after.trim()))
-            } else {
-                (response.as_str(), None)
-            };
+        current_input = String::new();
 
-        if let Some((_, raw_text)) = maybe_command.split_once("EXECUTE:") {
-            let command = raw_text.lines().next().unwrap_or("").trim();
-            if !command.is_empty() {
-                valid = true;
-                if let Some((output, error)) = handle_execution(command)? {
-                    let feedback = if !error.is_empty() {
-                        format!("Output of `{}`:\n{}\nIMPORTANT! FIX THIS ERROR: {}", command, output, error)
-                    } else {
-                        format!("Output of `{}`:\n{}", command, output)
-                    };
-                    history.push(Message { role: "user".to_string(), content: feedback });
+        if let Some((_, final_msg)) = response.split_once("FINAL:") {
+            let clean_msg = final_msg.trim();
+            if !clean_msg.is_empty() {
+                println!("{}: {}", style("Jade").green().bold(), clean_msg);
+            }
+            break;
+        }
+
+        let mut executed_something = false;
+        let mut feedback_buffer = String::new();
+
+        for line in response.lines() {
+            if let Some(cmd_part) = line.trim().strip_prefix("EXECUTE:") {
+                let command = cmd_part.trim();
+                if !command.is_empty() {
+                    executed_something = true;
+                    if let Some((output, error)) = handle_execution(command)? {
+                        feedback_buffer.push_str(&format!("Output of `{}`:\n{}\n", command, output));
+                        if !error.is_empty() {
+                            feedback_buffer.push_str(&format!("Error/Stderr: {}\n", error));
+                        }
+                    }
                 }
             }
         }
 
-        if let Some(msg) = maybe_final_message {
-            if !msg.is_empty() {
-                println!("{}: {}", style("Jade").green().bold(), msg);
-                break;
-            }
-        }
-
-        if !valid {
-            println!("{}", style("ABORTING: Error parsing response").bold().red());
+        if executed_something {
+            history.push(Message {
+                role: "user".to_string(),
+                content: feedback_buffer
+            });
+        } else {
+            println!("{}", style("ABORTING: Response contained neither EXECUTE nor FINAL").bold().red());
+            println!("Raw response: {}", response);
             break;
         }
+
         attempts += 1;
     }
     Ok(())
