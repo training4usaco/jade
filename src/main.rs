@@ -248,8 +248,6 @@ async fn repl_step(
             break;
         }
 
-        println!("RESPONSE: {}", response);
-
         let parts: Vec<&str> = response.split("EXECUTE:").collect();
         let mut executed_something = false;
         let mut feedback_buffer = String::new();
