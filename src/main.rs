@@ -160,8 +160,6 @@ async fn get_llm_response(
         max_tokens: 4096,
     };
 
-    println!("{}", style("Thinking...").dim());
-
     let res = client.post("https://integrate.api.nvidia.com/v1/chat/completions")
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
@@ -173,6 +171,8 @@ async fn get_llm_response(
         let error_text = res.text().await?;
         return Err(format!("NVIDIA API Error: {}", error_text).into());
     }
+
+    println!("{}", style("Thinking...").dim());
 
     let response_json: ChatResponse = res.json().await?;
     let raw_text = response_json.choices[0].message.content.clone();
@@ -248,19 +248,21 @@ async fn repl_step(
             break;
         }
 
+        println!("RESPONSE: {}", response);
+
+        let parts: Vec<&str> = response.split("EXECUTE:").collect();
         let mut executed_something = false;
         let mut feedback_buffer = String::new();
 
-        for line in response.lines() {
-            if let Some(cmd_part) = line.trim().strip_prefix("EXECUTE:") {
-                let command = cmd_part.trim();
-                if !command.is_empty() {
-                    executed_something = true;
-                    if let Some((output, error)) = handle_execution(command)? {
-                        feedback_buffer.push_str(&format!("Output of `{}`:\n{}\n", command, output));
-                        if !error.is_empty() {
-                            feedback_buffer.push_str(&format!("Error/Stderr: {}\n", error));
-                        }
+        for part in parts.iter().skip(1) {
+            let command = part.trim();
+
+            if !command.is_empty() {
+                executed_something = true;
+                if let Some((output, error)) = handle_execution(command)? {
+                    feedback_buffer.push_str(&format!("Output of `{}`:\n{}\n", command, output));
+                    if !error.is_empty() {
+                        feedback_buffer.push_str(&format!("Error/Stderr: {}\n", error));
                     }
                 }
             }
