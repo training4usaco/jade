@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 use reqwest::Client;
 use std::path::PathBuf;
 
+use rustyline::error::ReadlineError;
+use rustyline::DefaultEditor;
+
 const SYSTEM_PROMPT: &str = include_str!("prompts/system_prompt.txt");
 
 const MODEL_NAME: &str = "moonshotai/kimi-k2.5";
@@ -85,22 +88,35 @@ fn print_welcome() {
     println!("{}", style("╰──────────────────────────────────────────────────────────────────╯").dim());
 }
 
-fn read_user_input() -> String {
-    let mut user_input = String::new();
-    print!("> ");
-    io::stdout().flush().unwrap();
+fn read_user_input(editor: &mut DefaultEditor) -> Result<String, Box<dyn std::error::Error>> {
+    let prompt = format!("{} ", style(">").green().bold());
 
-    io::stdin()
-        .read_line(&mut user_input)
-        .expect("Failed to read line");
+    match editor.readline(&prompt) {
+        Ok(line) => {
+            let line = line.trim().to_string();
+            if !line.is_empty() {
+                editor.add_history_entry(line.as_str())?;
+            }
 
-    let user_input: String = user_input.trim().to_string();
+            if line == "quit" {
+                process::exit(0);
+            }
 
-    if user_input == "quit" {
-        process::exit(0);
+            Ok(line)
+        },
+        Err(ReadlineError::Interrupted) => {
+            println!("CTRL-C");
+            process::exit(0);
+        },
+        Err(ReadlineError::Eof) => {
+            println!("CTRL-D");
+            process::exit(0);
+        },
+        Err(err) => {
+            println!("Error: {:?}", err);
+            Err(Box::new(err))
+        }
     }
-
-    return user_input.trim().to_string();
 }
 
 fn add_llm_correction(command: &str, correction_message: &str, history: &mut Vec<Message>) {
@@ -224,13 +240,14 @@ fn handle_execution(command: &str) -> Result<Option<(String, String, bool)>, Box
 async fn repl_step(
     client: &Client,
     api_key: &str,
-    history: &mut Vec<Message>
+    history: &mut Vec<Message>,
+    editor: &mut DefaultEditor,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut current_input = read_user_input();
+    let mut current_input = read_user_input(editor)?;
     let git_status = get_git_status();
     let mut attempts: i8 = 0;
 
-    println!("{}", style("Understanding input...").dim());
+    println!("{}", style("Understanding user input...").dim());
 
     loop {
         if attempts > 10 {
@@ -343,6 +360,21 @@ fn setup_config() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn setup_editor() -> Result<(DefaultEditor, PathBuf), Box<dyn std::error::Error>> {
+    let mut editor = DefaultEditor::new()?;
+
+    let history_path = get_env_path().with_file_name(".jade_history");
+
+    if !history_path.exists() {
+        fs::File::create(&history_path)?;
+    }
+
+    if let Err(_) = editor.load_history(&history_path) {
+    }
+
+    Ok((editor, history_path))
+}
+
 #[tokio::main]
 async fn main() {
     print_welcome();
@@ -363,10 +395,13 @@ async fn main() {
     let api_key = env::var("NVIDIA_API_KEY")
         .expect("NVIDIA_API_KEY must be set in .env file");
 
+    let (mut editor, history_path) = setup_editor()
+        .expect("Failed to initialize terminal editor");
+
     let mut history: Vec<Message> = Vec::new();
 
     loop {
-        if let Err(e) = repl_step(&client, &api_key, &mut history).await {
+        if let Err(e) = repl_step(&client, &api_key, &mut history, &mut editor).await {
             println!("{}", style(format!("Critical Error: {}", e)).red().bold());
         }
     }
