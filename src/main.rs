@@ -180,7 +180,7 @@ async fn get_llm_response(
         content: cleaned_text.clone(),
     });
 
-    if history.len() > 50 {
+    if history.len() > 100 {
         history.drain(0..2);
     }
 
