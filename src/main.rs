@@ -108,7 +108,7 @@ fn add_llm_correction(command: &str, correction_message: &str, history: &mut Vec
 
     history.push(Message {
         role: "user".to_string(),
-        content: format!("ERROR: {} command is invalid. {}", command, correction_message),
+        content: format!("ERROR: {} command is invalid. {}\nEnsure future queries don't make this mistake again.", command, correction_message),
     });
 }
 
@@ -135,6 +135,8 @@ async fn get_llm_response(
         role: "system".to_string(),
         content: format!("{}\n\nGIT STATUS:\n{}", SYSTEM_PROMPT, git_status),
     };
+
+    println!("{}", style("Processing...").dim());
 
     if !user_input.trim().is_empty() {
         history.push(Message {
@@ -178,7 +180,7 @@ async fn get_llm_response(
         content: cleaned_text.clone(),
     });
 
-    if history.len() > 20 {
+    if history.len() > 50 {
         history.drain(0..2);
     }
 
@@ -228,7 +230,7 @@ async fn repl_step(
     let git_status = get_git_status();
     let mut attempts: i8 = 0;
 
-    println!("{}", style("Processing...").dim());
+    println!("{}", style("Understanding input...").dim());
 
     loop {
         if attempts > 10 {
