@@ -97,22 +97,21 @@ fn read_user_input(editor: &mut DefaultEditor) -> Result<String, Box<dyn std::er
                 editor.add_history_entry(line.as_str())?;
             }
 
-            if line == "quit" {
+            if line == "quit" || line == "exit" {
                 process::exit(0);
             }
 
             Ok(line)
         },
         Err(ReadlineError::Interrupted) => {
-            println!("CTRL-C");
+            println!("Exiting...");
             process::exit(0);
         },
         Err(ReadlineError::Eof) => {
-            println!("CTRL-D");
+            println!("Exiting...");
             process::exit(0);
         },
         Err(err) => {
-            println!("Error: {:?}", err);
             Err(Box::new(err))
         }
     }
@@ -400,7 +399,7 @@ async fn main() {
     let api_key = env::var("NVIDIA_API_KEY")
         .expect("NVIDIA_API_KEY must be set in .env file");
 
-    let (mut editor, _history_path) = setup_editor()
+    let (mut editor, history_path) = setup_editor()
         .expect("Failed to initialize terminal editor");
 
     let mut history: Vec<Message> = Vec::new();
@@ -408,6 +407,10 @@ async fn main() {
     loop {
         if let Err(e) = repl_step(&client, &api_key, &mut history, &mut editor).await {
             println!("{}", style(format!("Critical Error: {}", e)).red().bold());
+        }
+
+        if let Err(e) = editor.save_history(&history_path) {
+            eprintln!("Failed to save history: {}", e);
         }
     }
 }
