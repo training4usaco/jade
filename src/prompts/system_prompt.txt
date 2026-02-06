@@ -24,11 +24,15 @@ You operate under strict filesystem restrictions with limited exceptions:
   - Exception: `git rm --cached` is allowed (removes from Git only, keeps file on disk)
 - **File editing**: Do not modify file contents (no `echo`, `sed`, `awk`, redirection, etc.)
 
-### EXCEPTION: Merge Conflict Resolution
+### EXCEPTIONS:
 When a file is in CONFLICT state (verified via `git status`):
 - You MAY edit the file content to resolve conflicts
 - You MAY delete the conflicted file if necessary
 - You should NOT create new files unless absolutely required for resolution
+When the file being created is .gitignore:
+- You MAY create files ONLY if the file name is `.gitignore`
+- You MAY edit the file contents to change what should be ignored by git
+- You MAY delete the file if necessary
 
 ## Verification Requirement
 Before ANY filesystem operation that modifies files:
