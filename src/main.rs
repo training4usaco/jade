@@ -1,7 +1,6 @@
 use console::style;
 use dialoguer::{Confirm, Password};
-use std::{env, fs, io, process};
-use std::io::Write;
+use std::{env, fs, process};
 use std::process::Command;
 use serde::{Deserialize, Serialize};
 use reqwest::Client;
@@ -313,7 +312,6 @@ async fn repl_step(
 }
 
 fn get_env_path() -> PathBuf {
-    // Use ~/.jade/.env as the config location
     let home = env::var("HOME")
         .or_else(|_| env::var("USERPROFILE"))
         .expect("Could not determine home directory");
@@ -321,10 +319,32 @@ fn get_env_path() -> PathBuf {
     let mut path = PathBuf::from(home);
     path.push(".jade");
 
-    fs::create_dir_all(&path).ok();
+    fs::create_dir_all(&path).expect("Failed to create .jade directory");
 
     path.push(".env");
     path
+}
+
+fn get_jade_dir() -> PathBuf {
+    let home = env::var("HOME")
+        .or_else(|_| env::var("USERPROFILE"))
+        .expect("Could not determine home directory");
+
+    let mut path = PathBuf::from(home);
+    path.push(".jade");
+
+    fs::create_dir_all(&path).expect("Failed to create .jade directory");
+    path
+}
+
+fn setup_editor() -> Result<(DefaultEditor, PathBuf), Box<dyn std::error::Error>> {
+    let mut editor = DefaultEditor::new()?;
+
+    let history_path = get_jade_dir().join(".jade_history");
+
+    let _ = editor.load_history(&history_path);
+
+    Ok((editor, history_path))
 }
 
 fn setup_config() -> Result<(), Box<dyn std::error::Error>> {
@@ -360,21 +380,6 @@ fn setup_config() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn setup_editor() -> Result<(DefaultEditor, PathBuf), Box<dyn std::error::Error>> {
-    let mut editor = DefaultEditor::new()?;
-
-    let history_path = get_env_path().with_file_name(".jade_history");
-
-    if !history_path.exists() {
-        fs::File::create(&history_path)?;
-    }
-
-    if let Err(_) = editor.load_history(&history_path) {
-    }
-
-    Ok((editor, history_path))
-}
-
 #[tokio::main]
 async fn main() {
     print_welcome();
@@ -395,7 +400,7 @@ async fn main() {
     let api_key = env::var("NVIDIA_API_KEY")
         .expect("NVIDIA_API_KEY must be set in .env file");
 
-    let (mut editor, history_path) = setup_editor()
+    let (mut editor, _history_path) = setup_editor()
         .expect("Failed to initialize terminal editor");
 
     let mut history: Vec<Message> = Vec::new();
